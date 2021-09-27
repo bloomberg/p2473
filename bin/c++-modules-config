@@ -1,0 +1,197 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use File::Spec::Functions;
+use Getopt::Long;
+use JSON::XS;
+
+my @module_path;
+my $bmi_compat_id;
+my $relative;
+my $parse_imports;
+my $output_file;
+Getopt::Long::Configure("bundling");
+GetOptions(
+    "relative|r!" => \$relative,
+    "include|I=s" => \@module_path,
+    "bmi-uuid=s"  => \$bmi_compat_id,
+    "parse-imports!" => \$parse_imports,
+    "output|o=s" => \$output_file,
+) or die "Failed to parse arguments\n";
+
+die "Need a -o file" unless $output_file;
+
+sub search_file {
+    my ($relpath) = @_;
+    my ($abspath) =
+      map { my $i = catfile($_, $relpath); -e $i ? ($i) : () }
+      @module_path;
+    return $abspath, $relpath;
+}
+
+sub search_module_file {
+    my ($name, $ext) = @_;
+    my $relpath =
+      catfile(map { /^(.+)\:(.+)$/ ? ( $1.".part", $2 ) : $_ }
+              split /\./, $name).$ext;
+    return search_file($relpath);
+}
+
+sub parse_provides_requires {
+    my ($ixx) = @_;
+    # FIXME: naive, incomplete, parsing of imports
+    open my $fh, '<', $ixx or die
+      "Failed to open $ixx: $!\n";
+    my $provides;
+    my @requires;
+    while (defined (my $line = <$fh>)) {
+        if ($line =~ /^import (.+);$/) {
+            push @requires, $1;
+        }
+        if ($line =~ /^export module (.+);$/) {
+            $provides = $1;
+        }
+    }
+    close $fh;
+    return $provides, \@requires;
+}
+
+my %source_files;
+my %imports;
+my %imported;
+
+if (-e $output_file) {
+    eval {
+        my $mtime = (stat $output_file)[9];
+        open my $output_fh, '<', $output_file
+          or die "Failed to open $output_file to read: $!\n";
+        my $data = decode_json join '', <$output_fh>;
+        close $output_fh;
+        foreach my $entry (@$data) {
+            my $source = $entry->{'source-path'};
+            my ($abspath) = search_file($source);
+            my ($this_mtime) = (stat $abspath)[9];
+            if ($this_mtime <= $mtime) {
+                $source_files{$source} = $entry;
+                if (exists $entry->{provides} &&
+                      exists $entry->{provides}{'logical-name'}) {
+                    $imported{$entry->{provides}{'logical-name'}} = 1;
+                }
+            }
+        }
+    };
+    if ($@) {
+        warn "Ignoring existing file: $@\n";
+        %source_files = ();
+        %imports = ();
+        %imported = ();
+    }
+}
+
+if ($parse_imports) {
+    foreach my $arg (@ARGV) {
+        my ($abspath, $relpath) = search_file($arg);
+        my $source = $relative ? $relpath : $abspath;
+        if (exists $source_files{$source}) {
+            next;
+        }
+        warn "Scanning $source\n";
+        my $object = $source;
+        $object =~ s/\.(cpp|ixx)$//;
+        $object .= ".o";
+        my ($provides, $requires) = parse_provides_requires($abspath);
+        my @this_deps = @$requires;
+        $imports{$_} = 1 for @this_deps;
+        $source_files{$source} ||= {};
+        my $entry = $source_files{$source};
+        if ($provides) {
+            $entry->{provides}{'logical-name'} = $provides;
+            my $bmi = $source;
+            $bmi =~ s/\.ixx$//;
+            $bmi .= ".bmi.".$bmi_compat_id;
+            $entry->{provides}{'compiled-module-path'} = $bmi;
+            $imported{$provides} = 1;
+        }
+        $entry->{'primary-output'} = $object;
+        $entry->{"source-path"} = $source;
+        $entry->{"requires"} = [
+            map { { "logical-name" => $_ }; } @this_deps,
+        ];
+    }
+} else {
+    %imports = map { $_ => 1 } @ARGV;
+}
+
+while (%imports) {
+    my ($import) = keys %imports;
+    delete $imports{$import};
+    next if $imported{$import};
+    warn "Searching module $import\n";
+    my ($ixx_abspath, $ixx_relpath) = search_module_file($import, '.ixx')
+      or die "$import has no .ixx\n";
+    my ($bmi_abspath, $bmi_relpath) = search_module_file(
+        $import, ".bmi.".$bmi_compat_id)
+      if $bmi_compat_id;
+    my ($metaixx_abspath, $metaixx_relpath) = search_module_file(
+        $import, '.meta-ixx-info');
+    my $metaixx;
+    my $depends = [];
+    if ($metaixx_abspath) {
+        open my $meta, '<', $metaixx_abspath
+          or die "Failed to open $metaixx_abspath: $!\n";
+        $metaixx = decode_json(join '', <$meta>);
+        close $meta;
+    }
+    if (! ($metaixx && exists $metaixx->{depends})) {
+        (my $p, $depends) = parse_provides_requires($ixx_abspath, $metaixx);
+        $p = "<NONE>"
+          unless defined $p;
+        die "Invalid deployment: $ixx_relpath exports $p instead of $import.\n"
+          unless $p eq $import;
+    }
+    foreach my $d (@{$depends}) {
+        if (! exists $imported{$import}) {
+            $imports{$d} = 1;
+        }
+    }
+    $imported{$import} = 1;
+
+    my $source = $relative ? $ixx_relpath : $ixx_abspath;
+    my $compiled = $relative ? $bmi_relpath : $bmi_abspath;
+
+    $source_files{$source} ||= {};
+    my $entry = $source_files{$source};
+    $entry->{"source-path"} = $source;
+    $entry->{"requires"} = [
+        map { { "logical-name" => $_ }; } @$depends,
+    ];
+    $entry->{"provides"} = {
+        "logical-name" => $import,
+        ( $compiled ?
+            ( "compiled-module-path" => $compiled) : () ),
+    };
+    $entry->{"meta-ixx-info"} = $metaixx
+      if $metaixx;
+}
+
+
+open my $output_fh, '>', $output_file
+  or die "Failed to open $output_file: $!\n";
+print $output_fh encode_json([ values %source_files ]);
+close $output_fh;
+
+## ----------------------------------------------------------------------------
+## Copyright 2021 Bloomberg Finance L.P.
+##
+## Licensed under the Apache License, Version 2.0 (the "License");
+## you may not use this file except in compliance with the License.
+## You may obtain a copy of the License at
+##
+##     http://www.apache.org/licenses/LICENSE-2.0
+##
+## Unless required by applicable law or agreed to in writing, software
+## distributed under the License is distributed on an "AS IS" BASIS,
+## WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+## See the License for the specific language governing permissions and
+## limitations under the License.
+## ----------------------------- END-OF-FILE ----------------------------------

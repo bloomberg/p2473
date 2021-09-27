@@ -1,0 +1,113 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+
+use File::Spec::Functions;
+use Getopt::Long;
+use Digest::SHA1 qw(sha1_hex);
+
+my $object_output;
+my $bmi_output;
+my $compile_mode;
+my $print_bmi_uuid;
+my $dep_output;
+my $rec_dep_output;
+my @include_paths;
+my @defines;
+Getopt::Long::Configure("bundling");
+my $args = GetOptions(
+    "output|o=s" => \$object_output,
+    "bmiout|b=s" => \$bmi_output,
+    "d"          => \$dep_output,
+    "r"          => \$rec_dep_output,
+    "include|I=s" => \@include_paths,
+    "define|D=s"  => \@defines,
+    "c!"         => \$compile_mode,
+    "bmi-uuid!"  => \$print_bmi_uuid,
+) or die "Failed to parse arguments\n";
+
+my @inputs = @ARGV;
+
+my $bmi_uuid = "mockxx.7dcb1f2c-8680-46e1-bbe8-faeeaba75770";
+
+if ($print_bmi_uuid) {
+    print $bmi_uuid, $/;
+    exit 0;
+}
+
+if ($compile_mode && scalar @inputs > 1) {
+    die "too many inputs: @inputs";
+}
+
+my @imports;
+my $output;
+sub process_file {
+    my ($file) = @_;
+    open my $input_fh, '<', $file or die
+      "Failed to open $file: $!\n";
+    my @input_file = <$input_fh>;
+    push @imports,
+      map { /^import (.+);$/ ? ($1) : () } @input_file;
+    $output .= $file." => ".sha1_hex(join "", @input_file)."\n";
+    close $input_fh;
+}
+process_file($_) for @inputs;
+
+my @deps;
+my @missing_bmi;
+for my $import (@imports) {
+    my $bmi_relpath =
+      catfile(map { s/\:/.part\//; $_ } split /\./, $import).".bmi.".$bmi_uuid;
+    my ($bmi_abspath) =
+      map { my $i = catfile($_, $bmi_relpath); -e $i ? ($i) : () }
+      @include_paths;
+    if ($bmi_abspath) {
+        push @deps, $bmi_abspath;
+        if ($bmi_output || $object_output) {
+            open my $bmi, '<', $bmi_abspath
+              or die "Failed to open $bmi_abspath: $!";
+            $output .= $import." => ".sha1_hex(join('',<$bmi>))."\n";
+            close $bmi;
+        }
+    } else {
+        push @missing_bmi, $import;
+    }
+}
+
+if ($bmi_output || $object_output) {
+    if (@missing_bmi) {
+        die "Missing imports: @missing_bmi"
+    }
+}
+
+if ($bmi_output) {
+    open my $bmi, '>', $bmi_output
+      or die "Failed to open $bmi_output: $!";
+    print $bmi "BMI\n$output";
+    close $bmi;
+}
+
+if ($object_output) {
+    open my $obj, '>', $object_output
+      or die "Failed to open $object_output: $!";
+    print $obj "OBJ\n$output";
+    close $obj;
+}
+
+exit 0;
+
+## ----------------------------------------------------------------------------
+## Copyright 2021 Bloomberg Finance L.P.
+##
+## Licensed under the Apache License, Version 2.0 (the "License");
+## you may not use this file except in compliance with the License.
+## You may obtain a copy of the License at
+##
+##     http://www.apache.org/licenses/LICENSE-2.0
+##
+## Unless required by applicable law or agreed to in writing, software
+## distributed under the License is distributed on an "AS IS" BASIS,
+## WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+## See the License for the specific language governing permissions and
+## limitations under the License.
+## ----------------------------- END-OF-FILE ----------------------------------

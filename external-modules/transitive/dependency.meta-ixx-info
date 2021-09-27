@@ -1,0 +1,7 @@
+{
+  "include_path": [ "/a/b/c", "/d/e/f" ],
+  "definitions": {
+    "keywithval": "value",
+    "keywithoutval": null
+  }
+}

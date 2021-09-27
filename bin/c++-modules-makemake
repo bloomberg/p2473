@@ -1,0 +1,120 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use Getopt::Long;
+use JSON::XS;
+
+my $bmi_compat_id;
+my $output_file;
+Getopt::Long::Configure("bundling");
+GetOptions(
+    "output|o=s" => \$output_file,
+    "bmi-uuid=s"  => \$bmi_compat_id,
+) or die "Failed to parse arguments\n";
+
+die "Need bmi compat id" unless $bmi_compat_id;
+die "Need a -o file" unless $output_file;
+
+my $json = join '', <>;
+my $data = decode_json($json);
+
+my %mod_to_bmi;
+my %mod_to_src;
+my %mod_dep_mod;
+my %mod_cppflags;
+my %obj_dep_mod;
+my %obj_to_src;
+
+foreach my $e (@$data) {
+    die "source-path is required on ".encode_json($e)
+      unless exists $e->{'source-path'};
+    my $src = $e->{'source-path'};
+
+    if (exists $e->{provides}) {
+        die "provides is required on ".encode_json($e)
+          unless exists $e->{provides};
+        die "provides/logical-name is required on ".encode_json($e)
+          unless exists $e->{provides}{'logical-name'};
+
+        my $mod = $e->{provides}{'logical-name'};
+        my $bmi = $e->{'source-path'};
+        $bmi =~ s/\.ixx$//;
+        $bmi .= '.bmi.' . $bmi_compat_id;
+        if ( exists $e->{provides}{'compiled-module-path'} ) {
+            $bmi = $e->{provides}{'compiled-module-path'};
+        }
+        my @includes;
+        my @defines;
+        if ( exists $e->{"meta-ixx-info"} ) {
+            my $m = $e->{"meta-ixx-info"};
+            if ( exists $m->{include_path} ) {
+                @includes = @{ $m->{include_path} };
+            }
+            if ( exists $m->{definitions} ) {
+                @defines = map { [ $_ => $m->{definitions}{$_} ] }
+                  keys %{ $m->{definitions} };
+            }
+        }
+        $mod_cppflags{$mod} =
+          join " ",
+          ( map { "-I$_" } @includes ),
+          ( map { my ( $k, $v ) = @$_; defined $v ? "-D$k=$v" : "-D$k" }
+            @defines );
+        $mod_to_bmi{$mod}  = $bmi;
+        $mod_to_src{$mod}  = $src;
+        $mod_dep_mod{$mod} = [];
+        if ( exists $e->{requires} ) {
+            $mod_dep_mod{$mod} =
+              [ map { $_->{'logical-name'} } @{ $e->{requires} } ];
+        }
+
+    } else {
+        die "primary-output is required"
+          unless exists $e->{'primary-output'};
+        my $obj = $e->{'primary-output'};
+        $obj_to_src{$obj} = $src;
+        if ( exists $e->{requires} ) {
+            $obj_dep_mod{$obj} =
+              [ map { $_->{'logical-name'} } @{ $e->{requires} } ];
+        }
+    }
+}
+
+open my $output_fh, '>', $output_file
+  or die "Failed to open $output_file: $!\n";
+select $output_fh;
+
+foreach my $obj (sort keys %obj_to_src) {
+    print $obj.': '.join(
+        ' ',
+        $obj_to_src{$obj},
+        map { $mod_to_bmi{$_} } @{$obj_dep_mod{$obj}}
+    )."\n";
+}
+
+foreach my $mod (sort keys %mod_to_bmi) {
+    if ($mod_cppflags{$mod}) {
+        print $mod_to_bmi{$mod}.": MODULE_CPPFLAGS=".$mod_cppflags{$mod}."\n";
+    }
+    print $mod_to_bmi{$mod}.': '.join(
+        ' ',
+        $mod_to_src{$mod},
+        map { $mod_to_bmi{$_} } @{$mod_dep_mod{$mod}}
+    )."\n";
+}
+
+## ----------------------------------------------------------------------------
+## Copyright 2021 Bloomberg Finance L.P.
+##
+## Licensed under the Apache License, Version 2.0 (the "License");
+## you may not use this file except in compliance with the License.
+## You may obtain a copy of the License at
+##
+##     http://www.apache.org/licenses/LICENSE-2.0
+##
+## Unless required by applicable law or agreed to in writing, software
+## distributed under the License is distributed on an "AS IS" BASIS,
+## WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+## See the License for the specific language governing permissions and
+## limitations under the License.
+## ----------------------------- END-OF-FILE ----------------------------------
