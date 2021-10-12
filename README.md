@@ -4,8 +4,8 @@ This is a proof of concept on how a path-based approach can make it
 possible to build a C++ project with modules, including consuming C++
 modules external to the build system.
 
-This is meant as a side-car to the (Distributing C++ Module
-Libraries)[https://docs.google.com/document/d/1ohb1I8fDqc819sJnmVGfsajldjxlqkmwv9YNP2cXdgI/edit#] paper.
+This is meant as a side-car to the [Distributing C++ Module
+Libraries](https://isocpp.org/files/papers/P2473R0.pdf) paper.
 
 ## Invocation
 
