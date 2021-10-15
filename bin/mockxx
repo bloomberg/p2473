@@ -4,7 +4,7 @@ use warnings;
 
 use File::Spec::Functions;
 use Getopt::Long;
-use Digest::SHA1 qw(sha1_hex);
+use Digest::SHA qw(sha1_hex);
 
 my $object_output;
 my $bmi_output;
