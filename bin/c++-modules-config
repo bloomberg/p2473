@@ -4,6 +4,7 @@ use warnings;
 use File::Spec::Functions;
 use Getopt::Long;
 use JSON::XS;
+use Digest::SHA qw(sha1_hex);
 
 my @module_path;
 my $bmi_compat_id;
@@ -13,7 +14,7 @@ my $output_file;
 Getopt::Long::Configure("bundling");
 GetOptions(
     "relative|r!" => \$relative,
-    "include|I=s" => \@module_path,
+    "module-search-path=s" => \@module_path,
     "bmi-uuid=s"  => \$bmi_compat_id,
     "parse-imports!" => \$parse_imports,
     "output|o=s" => \$output_file,
@@ -127,21 +128,25 @@ while (%imports) {
     delete $imports{$import};
     next if $imported{$import};
     warn "Searching module $import\n";
-    my ($ixx_abspath, $ixx_relpath) = search_module_file($import, '.ixx')
-      or die "$import has no .ixx\n";
-    my ($bmi_abspath, $bmi_relpath) = search_module_file(
-        $import, ".bmi.".$bmi_compat_id)
-      if $bmi_compat_id;
+
+    my ($ixx_abspath, $ixx_relpath) = search_module_file($import, '.ixx');
+    die "$import has no .ixx\n" unless $ixx_abspath;
+
     my ($metaixx_abspath, $metaixx_relpath) = search_module_file(
         $import, '.meta-ixx-info');
-    my $metaixx;
+    die "$import has no .meta-ixx-info\n" unless $metaixx_abspath;
+    open my $metaixx_fh, '<', $metaixx_abspath
+      or die "Failed to open $metaixx_abspath: $!\n";
+    my $metaixx_contents = join '', <$metaixx_fh>;
+    my $metaixx_sha1 = sha1_hex($metaixx_contents);
+    my $metaixx = decode_json($metaixx_contents);
+    close $metaixx_fh;
+
+    my ($bmi_abspath, $bmi_relpath) = search_module_file(
+        $import, ".bmi.".$bmi_compat_id.".".$metaixx_sha1)
+      if $bmi_compat_id;
+
     my $depends = [];
-    if ($metaixx_abspath) {
-        open my $meta, '<', $metaixx_abspath
-          or die "Failed to open $metaixx_abspath: $!\n";
-        $metaixx = decode_json(join '', <$meta>);
-        close $meta;
-    }
     if (! ($metaixx && exists $metaixx->{depends})) {
         (my $p, $depends) = parse_provides_requires($ixx_abspath, $metaixx);
         $p = "<NONE>"

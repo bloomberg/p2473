@@ -12,6 +12,7 @@ my $compile_mode;
 my $print_bmi_uuid;
 my $dep_output;
 my $rec_dep_output;
+my @module_paths;
 my @include_paths;
 my @defines;
 Getopt::Long::Configure("bundling");
@@ -20,6 +21,7 @@ my $args = GetOptions(
     "bmiout|b=s" => \$bmi_output,
     "d"          => \$dep_output,
     "r"          => \$rec_dep_output,
+    "module-search-path=s" => \@module_paths,
     "include|I=s" => \@include_paths,
     "define|D=s"  => \@defines,
     "c!"         => \$compile_mode,
@@ -53,14 +55,32 @@ sub process_file {
 }
 process_file($_) for @inputs;
 
+sub search_file {
+    my $relpath = shift;
+    for my $path (@module_paths) {
+        my $abspath = catfile($path, $relpath);
+        if (-e $abspath) {
+            return $abspath;
+        }
+    }
+    return;
+}
+
 my @deps;
 my @missing_bmi;
 for my $import (@imports) {
+    my $meta_ixx_relpath =
+      catfile(map { s/\:/.part\//; $_ } split /\./, $import).".meta-ixx-info";
+    my $meta_ixx_abspath = search_file($meta_ixx_relpath);
     my $bmi_relpath =
       catfile(map { s/\:/.part\//; $_ } split /\./, $import).".bmi.".$bmi_uuid;
-    my ($bmi_abspath) =
-      map { my $i = catfile($_, $bmi_relpath); -e $i ? ($i) : () }
-      @include_paths;
+    if ($meta_ixx_abspath) {
+        open my $meta_fh, '<', $meta_ixx_abspath
+          or die "Failed to open $meta_ixx_abspath: $!\n";
+        my $sha1sum = sha1_hex(join '',<$meta_fh>);
+        $bmi_relpath .= '.'.$sha1sum;
+    }
+    my $bmi_abspath = search_file($bmi_relpath);
     if ($bmi_abspath) {
         push @deps, $bmi_abspath;
         if ($bmi_output || $object_output) {
@@ -70,6 +90,7 @@ for my $import (@imports) {
             close $bmi;
         }
     } else {
+        warn "Failed to find $bmi_relpath\n";
         push @missing_bmi, $import;
     }
 }

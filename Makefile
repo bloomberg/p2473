@@ -9,37 +9,39 @@ CXX=$(MOCKXX)
 MODULE_PATH:=. $(SRCROOT) $(SRCROOT)/external-modules
 VPATH=$(SRCROOT):$(SRCROOT)/external-modules
 
-SOURCES= \
-	main.cpp \
-	foo/bar.ixx \
-	foo/baz.ixx \
-	foo/baz.part/part1.ixx \
-	foo/baz.part/part2.ixx
+SOURCES= main.cpp \
+	 foo/bar.ixx \
+	 foo/baz.ixx \
+	 foo/baz.part/part1.ixx \
+	 foo/baz.part/part2.ixx
 
 OBJECTS=$(patsubst %.cpp,%.o,$(patsubst %.ixx,%.o,$(SOURCES)))
-CPPFLAGS=$(patsubst %,-I%,$(MODULE_PATH))
+CPPFLAGS=-DSEEN_ONLY_INSIDE_PROJECT=1
+MODULE_SEARCH=$(patsubst %,--module-search-path=%,$(MODULE_PATH))
 
 all: example-executable
 
-%.bmi.$(BMI_UUID): %.ixx
-	mkdir -p $(dir $@)
-	$(CXX) $(MODULE_CPPFLAGS) $(CPPFLAGS) -b $@ $<
+example-executable: $(OBJECTS)
+	$(CXX) $(MODULE_SEARCH) -o $@ $^
 
-%.o: %.ixx %.bmi.$(BMI_UUID)
-	mkdir -p $(dir $@)
-	$(CXX) $(CPPFLAGS) -o $@ $<
+%.o: %.ixx
+	mkdir -p $(dir $@) && $(CXX) $(CPPFLAGS) $(MODULE_SEARCH) -o $@ $<
+
+%.o: %.cpp
+	mkdir -p $(dir $@) && $(CXX) $(CPPFLAGS) $(MODULE_SEARCH) -o $@ $<
 
 module_config.json: $(SOURCES) Makefile
-	$(SRCROOT)bin/c++-modules-config -r $(CPPFLAGS) \
+	$(SRCROOT)bin/c++-modules-config -r $(MODULE_SEARCH) \
           --bmi-uuid=$(BMI_UUID) \
 	  $(patsubst %,--parse-imports %,$(SOURCES)) -o $@
 
+MODULE_RECIPE= mkdir -p $$(dir $$@) && \
+ $$(CXX) $$(MODULE_CPPFLAGS) $$(MODULE_SEARCH) -b $$@ $$<
 deps.mk: module_config.json
-	$(SRCROOT)bin/c++-modules-makemake --bmi-uuid=$(BMI_UUID) -o $@ $<
-
-example-executable: $(OBJECTS)
-	$(CXX) $(patsubst %,-I%,$(MODULE_PATH)) -o $@ $^
-
+	$(SRCROOT)bin/c++-modules-makemake \
+	  --module-cppflags-variable='MODULE_CPPFLAGS' \
+	  --recipe '$(MODULE_RECIPE)' \
+	  --bmi-uuid=$(BMI_UUID) -o $@ $<
 include deps.mk
 
 ## ----------------------------------------------------------------------------

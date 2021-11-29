@@ -6,14 +6,27 @@ use JSON::XS;
 
 my $bmi_compat_id;
 my $output_file;
+my $recipe;
+my $module_cppflags_variable;
 Getopt::Long::Configure("bundling");
 GetOptions(
     "output|o=s" => \$output_file,
     "bmi-uuid=s"  => \$bmi_compat_id,
+    "recipe=s"  => \$recipe,
+    "module-cppflags-variable=s" => \$module_cppflags_variable,
 ) or die "Failed to parse arguments\n";
 
-die "Need bmi compat id" unless $bmi_compat_id;
-die "Need a -o file" unless $output_file;
+die "Need bmi compat id"
+  unless $bmi_compat_id;
+
+die "Need a -o file"
+  unless $output_file;
+
+die "Need a module build recipe"
+  unless $recipe;
+
+die "Need the variable name for module cppflags"
+  unless $module_cppflags_variable;
 
 my $json = join '', <>;
 my $data = decode_json($json);
@@ -94,13 +107,15 @@ foreach my $obj (sort keys %obj_to_src) {
 
 foreach my $mod (sort keys %mod_to_bmi) {
     if ($mod_cppflags{$mod}) {
-        print $mod_to_bmi{$mod}.": MODULE_CPPFLAGS=".$mod_cppflags{$mod}."\n";
+        print $mod_to_bmi{$mod}.": $module_cppflags_variable=".
+          $mod_cppflags{$mod}."\n";
     }
     print $mod_to_bmi{$mod}.': '.join(
         ' ',
         $mod_to_src{$mod},
         map { $mod_to_bmi{$_} } @{$mod_dep_mod{$mod}}
     )."\n";
+    print "\t$recipe\n\n";
 }
 
 ## ----------------------------------------------------------------------------
