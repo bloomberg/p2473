@@ -5,7 +5,7 @@ possible to build a C++ project with modules, including consuming C++
 modules external to the build system.
 
 This is meant as a side-car to the [Distributing C++ Module
-Libraries](https://isocpp.org/files/papers/P2473R0.pdf) paper.
+Libraries](https://isocpp.org/files/papers/P2473R1.pdf) paper.
 
 ## Invocation
 
